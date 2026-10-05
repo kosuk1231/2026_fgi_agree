@@ -408,7 +408,7 @@ h2{font-size:20px;margin:6px 0 4px;font-weight:700;color:var(--navy)}
    - GAS_URL 에 Apps Script 웹앱 배포 URL(/exec)을 넣으세요.
    - 비워두면 데모 모드로 동작합니다(저장·발송 없음).
    ========================================================= */
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwI3nxswLET6UwDQ-0b0525yolk2-QVWjrzlhKAWxBewgq7UeBYW-MArEbTQko7eopG/exec";   // 예: "https://script.google.com/macros/s/AKfycb.../exec"
+const GAS_URL = "";   // 예: "https://script.google.com/macros/s/AKfycb.../exec"
 
 const EVENT = {
   date: "2026년 10월 6일(화)",
@@ -601,14 +601,17 @@ async function submit(){
     let res;
     if(!GAS_URL){ await new Promise(r=>setTimeout(r,1500)); res={ok:true,demo:true}; }
     else{
-      const r=await fetch(GAS_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(p)});
-      res=await r.json();
+      const ac=new AbortController(); const t=setTimeout(()=>ac.abort(),60000);
+      const r=await fetch(GAS_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(p),signal:ac.signal}).finally(()=>clearTimeout(t));
+      const txt=await r.text();
+      try{ res=JSON.parse(txt); }
+      catch(_){ throw new Error(txt.trim().startsWith("<") ? "서버가 올바르게 응답하지 않았습니다(배포 설정 또는 스크립트 오류). 담당자에게 알려주세요." : "응답 해석 실패"); }
     }
     if(!res.ok) throw new Error(res.error||"서버 오류");
     $("#doneMsg").innerHTML = `<strong>${p.name}</strong>님, 연구참여 동의서와 참여수당 영수증이 접수되었습니다.<br>연구자 서명 후 사본 PDF를 <strong>${p.email}</strong>(으)로 보내드립니다.${res.demo?"<br><em style='color:#7a5a00'>(데모 모드: 실제 저장·발송은 되지 않았습니다)</em>":""}`;
     go(6);
   }catch(err){
-    showErr(5, "제출에 실패했습니다: "+err.message+" — 네트워크 상태를 확인한 뒤 다시 시도하시거나 담당자에게 알려주세요.");
+    showErr(5, "제출에 실패했습니다: "+(err.name==="AbortError"?"서버 응답이 60초 넘게 없습니다.":err.message)+" — 잠시 후 다시 시도하시거나 담당자에게 알려주세요.");
   }finally{
     busy=false; btn.disabled=false; btn.innerHTML=html; $("#btnPrev").disabled=false;
   }

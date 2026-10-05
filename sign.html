@@ -141,13 +141,14 @@ async function sign(){
   if(!rname()) return showErr("연구자 성명을 선택하세요.");
   if(pad.isEmpty()) return showErr("연구자 서명을 해주세요.");
   if(!confirm(`${GROUPS[group][0]} 그룹 ${ids.length}명의 동의서에 ${rname()} 연구자 서명을 넣고 이메일을 발송합니다. 진행할까요?`)) return;
-  const btn=$("#btnSign"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>PDF 생성·발송 중… (${ids.length}명, 1분 정도 걸릴 수 있습니다)`;
+  const btn=$("#btnSign"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>PDF 생성·발송 중… (${ids.length}명 × 약 20초, 화면을 닫지 마세요)`;
   try{
     let res;
     if(!GAS_URL){ await new Promise(r=>setTimeout(r,1500)); res={ok:true,results:ids.map(id=>({id,name:data.find(d=>d.id===id).name,ok:true,msg:"데모"}))}; }
     else{
       const r=await fetch(GAS_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"sign",key,ids,researcherName:rname(),researcherSig:pad.data()})});
-      res=await r.json();
+      const txt=await r.text();
+      try{ res=JSON.parse(txt); }catch(_){ throw new Error(txt.trim().startsWith("<")?"서버가 올바르게 응답하지 않았습니다(배포 설정/스크립트 오류). 시트의 log 탭을 확인하세요.":"응답 해석 실패"); }
     }
     if(!res.ok) throw new Error(res.error||"서버 오류");
     $("#resCard").classList.remove("hidden");

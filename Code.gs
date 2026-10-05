@@ -2,7 +2,10 @@
  * FGI 연구참여 동의서 · 참여수당 영수증  — Google Apps Script 백엔드
  * 배포 계정: kosuk1231@sasw.or.kr
  *
- * 흐름: 참여자 제출(submit) → 서명대기 → 연구자 일괄 서명(sign) → 동의서 PDF 생성 + 이메일 발송 → 완료
+ * 흐름: 참여자 제출(submit, 저장만·3~5초) → 서명대기
+ *       → 연구자 일괄 서명(sign) → 동의서·영수증 PDF 생성 + 이메일 발송 → 완료
+ * 주민등록번호·서명 등 제출 원본은 Drive `_대기자료/{id}.json`에만 임시 보관되고,
+ * PDF가 만들어지는 즉시 삭제됩니다(시트에는 저장 안 함).
  *
  * 1) 이 파일 + Templates.gs 를 **같은** Apps Script 프로젝트에 넣는다.
  *    (Templates.gs 가 없으면 "buildConsentHtml is not defined" 오류)
@@ -27,7 +30,7 @@ const SHEETS = {
   participants: ["id","group","groupName","no","name","org","position","email","status","submittedAt"],
   consent:  ["id","group","name","email","org","position","안내문열람","동의1","동의2","동의3","동의4",
              "생년월일","성별","소속기관/직급","근무지역","주요업무","현기관근무기간","사회복지경력","학력","자격증",
-             "동의일","참여자서명파일ID","상태","연구자","연구자서명일","PDF_URL","발송일시","submittedAt"],
+             "동의일","대기자료파일ID","상태","연구자","연구자서명일","PDF_URL","발송일시","submittedAt"],
   receipt:  ["id","group","name","FGI일시","주소","전화번호","은행명","계좌번호","금액","원천징수액","실수령액",
              "개인정보동의","고유식별정보동의","영수일","PDF_URL","submittedAt"],
   log:      ["timestamp","id","name","email","result","detail"]
@@ -88,11 +91,8 @@ function doGet(e) {
     if (p.key !== CONFIG.ADMIN_KEY) return json({ ok:false, error:"비밀번호가 올바르지 않습니다." });
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const prow = ss.getSheetByName("participants").getDataRange().getValues().slice(1);
-    const crow = ss.getSheetByName("consent").getDataRange().getValues().slice(1);
-    const sigOf = {}; crow.forEach(r => { if (r[0] && r[21]) sigOf[r[0]] = r[21]; });
     const out = prow.filter(r => r[0]).map(r => ({
-      id:r[0], group:r[1], name:r[4], org:r[5], email:r[7], status:r[8]||"미작성",
-      sig: sigOf[r[0]] ? safeThumb(sigOf[r[0]]) : ""
+      id:r[0], group:r[1], name:r[4], org:r[5], email:r[7], status:r[8]||"미작성"
     }));
     return json({ ok:true, participants: out });
   }
@@ -100,11 +100,8 @@ function doGet(e) {
   const rows = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName("participants").getDataRange().getValues().slice(1);
   return json({ ok:true, participants: rows.filter(r=>r[0]).map(r => ({ id:r[0], group:r[1], name:r[4], status:r[8] })) });
 }
-function safeThumb(fileId){ try { return "data:image/png;base64," + Utilities.base64Encode(DriveApp.getFileById(fileId).getBlob().getBytes()); } catch(_) { return ""; } }
 
 function doPost(e) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
   let d = null;
   try {
     d = JSON.parse(e.postData.contents);
@@ -113,46 +110,44 @@ function doPost(e) {
   } catch (err) {
     log(d && d.id, d && d.name, d && d.email, "실패", err);
     return json({ ok:false, error: String(err && err.message || err) });
-  } finally {
-    lock.releaseLock();
   }
 }
 
-/* ---------- 1) 참여자 제출: 저장 + 영수증 PDF 즉시 생성 (이메일은 아직) ---------- */
+/* ---------- 1) 참여자 제출: 저장만 (PDF·메일은 연구자 서명 때) ---------- */
 function handleSubmit(d) {
   validate(d);
   const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
   const ps = ss.getSheetByName("participants");
-  const prow = findRow(ps, d.id);
-  if (prow) {
-    const st = ps.getRange(prow, 9).getValue();
-    if (st === "서명대기" || st === "완료") throw new Error("이미 제출된 참여자입니다. 수정이 필요하면 담당자(02-786-2962)에게 연락해 주세요.");
-  }
   const now = new Date();
-  const stamp = Utilities.formatDate(now, "Asia/Seoul", "yyyyMMdd_HHmm");
-  const folder = getFolder(`${d.group}_${d.groupName}`);
-  const sigFolder = getFolder("_서명이미지");
-
-  // 참여자 서명 PNG 보관(동의서 PDF는 연구자 서명 후 생성)
-  const sigFile = sigFolder.createFile(dataUrlToBlob(d.consent.sig, `서명_${d.id}_${d.name}.png`));
-  // 영수증 PDF는 지금 바로 (주민번호는 여기에만 기재, 시트/다른 곳에 저장 안 함)
-  const receiptPdf = htmlToPdf(buildReceiptHtml(d), `영수증_${d.group}_${d.name}_${stamp}.pdf`);
-  const f2 = folder.createFile(receiptPdf);
-
   const b = d.consent.basic, r = d.receipt;
-  ss.getSheetByName("consent").appendRow([
-    d.id, d.group, d.name, d.email, d.org, d.position, "Y", "Y","Y","Y","Y",
-    "'" + b.birth, b.gender, b.orgPos, b.region, b.job, b.tenure, b.career, b.edu, b.cert,
-    d.consent.date, sigFile.getId(), "서명대기", "", "", "", "", now
-  ]);
-  ss.getSheetByName("receipt").appendRow([
-    d.id, d.group, d.name, d.fgiDate, r.address, r.phone, r.bank, "'" + r.account,
-    CONFIG.AMOUNT, 0, CONFIG.AMOUNT, r.privacyAgree, r.uidAgree, r.date, f2.getUrl(), now
-  ]);
-  if (prow) ps.getRange(prow, 8, 1, 3).setValues([[d.email, "서명대기", now]]);
-  else ps.appendRow([d.id, d.group, d.groupName, 99, d.name, d.org, d.position, d.email, "서명대기", now]);
 
-  log(d.id, d.name, d.email, "제출", "영수증 PDF 생성, 연구자 서명 대기");
+  // 원본(서명 이미지·주민번호 포함)은 Drive JSON에만 임시 보관 → PDF 생성 후 삭제
+  const pending = getFolder("_대기자료").createFile(
+    Utilities.newBlob(JSON.stringify(d), "application/json", `${d.id}_${d.name}.json`));
+
+  // 시트 기록 구간만 짧게 잠금(중복 제출 방지)
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) { pending.setTrashed(true); throw new Error("서버가 잠시 바쁩니다. 10초 뒤 다시 제출해 주세요."); }
+  try {
+    const prow = findRow(ps, d.id);
+    if (prow) {
+      const st = ps.getRange(prow, 9).getValue();
+      if (st === "서명대기" || st === "완료") { pending.setTrashed(true); throw new Error("이미 제출된 참여자입니다. 수정이 필요하면 담당자(02-786-2962)에게 연락해 주세요."); }
+    }
+    ss.getSheetByName("consent").appendRow([
+      d.id, d.group, d.name, d.email, d.org, d.position, "Y", "Y","Y","Y","Y",
+      "'" + b.birth, b.gender, b.orgPos, b.region, b.job, b.tenure, b.career, b.edu, b.cert,
+      d.consent.date, pending.getId(), "서명대기", "", "", "", "", now
+    ]);
+    ss.getSheetByName("receipt").appendRow([
+      d.id, d.group, d.name, d.fgiDate, r.address, r.phone, r.bank, "'" + r.account,
+      CONFIG.AMOUNT, 0, CONFIG.AMOUNT, r.privacyAgree, r.uidAgree, r.date, "", now
+    ]);
+    if (prow) ps.getRange(prow, 8, 1, 3).setValues([[d.email, "서명대기", now]]);
+    else ps.appendRow([d.id, d.group, d.groupName, 99, d.name, d.org, d.position, d.email, "서명대기", now]);
+  } finally { lock.releaseLock(); }
+
+  log(d.id, d.name, d.email, "제출", "서명대기");
   return { ok:true, id:d.id };
 }
 
@@ -168,6 +163,7 @@ function handleSign(d) {
   const signDate = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy년 M월 d일");
   const results = [];
 
+  const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyyMMdd_HHmm");
   d.ids.forEach(id => {
     let name = id;
     try {
@@ -175,35 +171,30 @@ function handleSign(d) {
       if (ci < 0) throw new Error("동의서 데이터 없음");
       const c = cHead[ci]; name = c[2];
       if (c[22] === "완료") throw new Error("이미 서명·발송 완료");
-      const rr = rAll.find((r,i) => i>0 && r[0] === id);
-      if (!rr) throw new Error("영수증 데이터 없음");
+      const ri = rAll.findIndex((r,i) => i>0 && r[0] === id);
+      if (ri < 0) throw new Error("영수증 데이터 없음");
 
-      // 참여자 서명 복원
-      const sigData = safeThumb(c[21]);
-      const groupName = ps.getDataRange().getValues().find(r => r[0] === id);
-      const gname = groupName ? groupName[2] : ({A:"최고관리자",B:"중간관리자",C:"실무자"})[c[1]];
-      const data = {
-        id, group:c[1], groupName:gname, fgiDate: rr[3], place:"서울특별시사회복지사협회 304호 다락(多樂)실",
-        name, org:c[4], position:c[5], email:c[3],
-        consent:{ basic:{ birth:String(c[11]), gender:c[12], orgPos:c[13], region:c[14], job:c[15], tenure:c[16], career:c[17], edu:c[18], cert:c[19] },
-                  sig:sigData, date:c[20], researcherName:d.researcherName, researcherSig:d.researcherSig, researcherDate:signDate },
-        receipt:{ bank: rr[6], account: String(rr[7]).replace(/^'/,"") }
-      };
-      const folder = getFolder(`${c[1]}_${gname}`);
-      const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyyMMdd_HHmm");
-      const consentPdf = htmlToPdf(buildConsentHtml(data), `동의서_${c[1]}_${name}_${stamp}.pdf`);
-      const f1 = folder.createFile(consentPdf);
-      // 영수증 PDF는 제출 시 만든 파일을 Drive URL로 다시 불러옴
-      const receiptFile = DriveApp.getFileById(idFromUrl(rr[14]));
-      const receiptPdf = receiptFile.getBlob().setName(receiptFile.getName());
+      // 제출 원본 복원
+      const pendingFile = DriveApp.getFileById(c[21]);
+      const data = JSON.parse(pendingFile.getBlob().getDataAsString());
+      data.consent.researcherName = d.researcherName;
+      data.consent.researcherSig  = d.researcherSig;
+      data.consent.researcherDate = signDate;
+
+      const folder = getFolder(`${data.group}_${data.groupName}`);
+      const consentPdf = htmlToPdf(buildConsentHtml(data), `동의서_${data.group}_${name}_${stamp}.pdf`);
+      const receiptPdf = htmlToPdf(buildReceiptHtml(data), `영수증_${data.group}_${name}_${stamp}.pdf`);
+      const f1 = folder.createFile(consentPdf), f2 = folder.createFile(receiptPdf);
 
       sendMails(data, [consentPdf, receiptPdf]);
 
       const now = new Date();
       cs.getRange(ci+1, 23, 1, 5).setValues([["완료", d.researcherName, signDate, f1.getUrl(), now]]);
+      rs.getRange(ri+1, 15).setValue(f2.getUrl());
       const prow = findRow(ps, id); if (prow) ps.getRange(prow, 9).setValue("완료");
-      log(id, name, c[3], "발송", d.researcherName + " 서명 / " + f1.getUrl());
-      results.push({ id, name, ok:true, msg:"동의서 PDF 생성, 이메일 발송 완료" });
+      pendingFile.setTrashed(true);   // 주민번호 포함 원본 삭제
+      log(id, name, data.email, "발송", d.researcherName + " 서명 / " + f1.getUrl());
+      results.push({ id, name, ok:true, msg:"PDF 2종 생성, 이메일 발송 완료" });
     } catch (err) {
       log(id, name, "", "서명실패", err);
       results.push({ id, name, ok:false, msg:String(err && err.message || err) });
@@ -224,11 +215,6 @@ function findRow(sh, id) {
   const i = sh.getRange(2, 1, n-1, 1).getValues().flat().indexOf(id);
   return i < 0 ? null : i + 2;
 }
-function dataUrlToBlob(dataUrl, name) {
-  const b64 = String(dataUrl).split(",")[1];
-  return Utilities.newBlob(Utilities.base64Decode(b64), "image/png", name);
-}
-function idFromUrl(url) { const m = String(url).match(/[-\w]{25,}/); return m ? m[0] : url; }
 function htmlToPdf(html, filename) {
   return Utilities.newBlob(html, "text/html", filename.replace(/\.pdf$/, ".html")).getAs("application/pdf").setName(filename);
 }
