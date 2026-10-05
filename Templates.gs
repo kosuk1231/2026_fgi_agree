@@ -27,6 +27,7 @@ const PDF_CSS = `
   .chk { font-family:'Noto Sans CJK KR','Malgun Gothic',sans-serif; }
 </style>`;
 
+function fmtBirth(v){ v=String(v||"").replace(/\D/g,""); if(v.length!==6) return esc(v); const yy=+v.slice(0,2), cur=new Date().getFullYear()%100; const y=(yy<=cur?2000:1900)+yy; return `${y}년 ${+v.slice(2,4)}월 ${+v.slice(4,6)}일`; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function sigImg(dataUrl, h){ return dataUrl ? `<img src="${dataUrl}" style="height:${h||46}px;vertical-align:middle">` : `<span style="display:inline-block;width:120px;height:${h||46}px"></span>`; }
 
@@ -90,14 +91,14 @@ function buildConsentHtml(d) {
     <td>날짜: ${esc(d.consent.date)}</td></tr>
 <tr><th>동의를 받은 연구자</th>
     <td>성명: <strong>${esc(d.consent.researcherName)}</strong> &nbsp; ${sigImg(d.consent.researcherSig, 44)} <span class="small">(서명)</span></td>
-    <td>날짜: ${esc(d.consent.date)}</td></tr>
+    <td>날짜: ${esc(d.consent.researcherDate||d.consent.date)}</td></tr>
 </table>
 <p class="small" style="margin-top:6px">본 동의서는 2부 작성하여 참여자와 연구자가 각 1부씩 보관합니다. (전자서명본 — 참여자 이메일 발송본과 협회 보관본)</p>
 <p class="small">FGI 그룹: ${esc(d.group)} · ${esc(d.groupName)} &nbsp;|&nbsp; 일시: ${esc(d.fgiDate)} &nbsp;|&nbsp; 장소: ${esc(d.place||"")}</p>
 
 <h2 style="margin-top:22px">기본사항</h2>
 <table>
-<tr><th>생년월</th><td>${esc(b.birth)}</td><th>성별</th><td>${esc(b.gender)}</td></tr>
+<tr><th>생년월일</th><td>${fmtBirth(b.birth)}</td><th>성별</th><td>${esc(b.gender)}</td></tr>
 <tr><th>소속기관/직급</th><td colspan="3">${esc(b.orgPos)}</td></tr>
 <tr><th>근무지역</th><td>${esc(b.region)}</td><th>사회복지 근무 경력</th><td>${esc(b.career)}</td></tr>
 <tr><th>주요 업무</th><td colspan="3">${esc(b.job)}</td></tr>

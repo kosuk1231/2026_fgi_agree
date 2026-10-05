@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>연구자 일괄 서명 | FGI 동의서</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#17365d;--navy-2:#24497a;--green:#4e9a3a;--red:#c0392b;--ink:#1c2430;--ink-2:#4a5565;--ink-3:#8a94a3;--line:#d8dee8;--line-2:#e9edf3;--bg:#eef1f5;--soft:#f6f8fb;--tint:#eaf1fb;--r:10px;--r-s:6px;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;font-size:16px;line-height:1.6;word-break:keep-all}
+button,input,select{font:inherit;color:inherit}
+input,select{width:100%;background:#fff;border:1px solid var(--line);border-radius:var(--r-s);padding:12px 13px;outline:none;min-height:48px}
+input:focus,select:focus{border-color:var(--navy-2);box-shadow:0 0 0 3px rgba(36,73,122,.14)}
+input[type=checkbox]{width:22px;height:22px;min-height:0;margin:0;accent-color:var(--navy);flex:none}
+.top{background:var(--navy);color:#fff;padding:14px 18px}
+.top .org{font-size:12px;opacity:.8}.top h1{margin:2px 0 0;font-size:17px}
+.wrap{max-width:640px;margin:0 auto;padding:16px 14px 40px}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 12px;font-size:16px}
+.field{margin-bottom:14px}.field label{display:block;font-size:13.5px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.hint{font-size:12.5px;color:var(--ink-3);margin-top:5px}
+.err{display:none;background:#fdecea;color:#8e2a20;border:1px solid #f5c2bc;border-radius:var(--r-s);padding:10px 12px;font-size:14px;margin:0 0 12px}.err.show{display:block}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{flex:1;border:1px solid var(--line);background:#fff;border-radius:var(--r-s);padding:10px 4px;font-weight:700;cursor:pointer;color:var(--ink-2)}
+.tabs button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.tabs small{display:block;font-weight:400;font-size:12px}
+.row{display:flex;gap:12px;align-items:center;padding:11px 0;border-top:1px solid var(--line-2)}
+.row:first-of-type{border-top:0}
+.row .nm{font-weight:700}.row .org{font-size:13px;color:var(--ink-2)}
+.row img{height:34px;border:1px solid var(--line-2);border-radius:4px;background:#fff;margin-left:auto}
+.st{font-size:12px;border-radius:999px;padding:2px 9px;background:var(--tint);color:var(--navy);flex:none}
+.st.done{background:#e6f4e1;color:#2f6b1f}.st.none{background:#f1f3f6;color:var(--ink-3)}
+.sig .pad{position:relative;background:#fff;border:1.5px dashed #a9b4c4;border-radius:var(--r);height:200px;touch-action:none;overflow:hidden}
+.sig .pad.inked{border-style:solid;border-color:var(--navy)}
+.sig canvas{display:block;width:100%;height:100%}
+.sig .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b6bfcc;pointer-events:none}
+.sig .pad.inked .ph{display:none}
+.sig .tools{display:flex;justify-content:flex-end;margin-top:8px}
+.sig .tools button{background:none;border:1px solid var(--line);border-radius:var(--r-s);padding:6px 12px;color:var(--ink-2);cursor:pointer;font-size:13px}
+.btn{width:100%;border:0;border-radius:var(--r);min-height:54px;font-size:16px;font-weight:700;cursor:pointer;background:var(--green);color:#fff}
+.btn:disabled{opacity:.45}
+.btn.navy{background:var(--navy)}
+.spin{display:inline-block;width:18px;height:18px;border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-4px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.res{font-size:14px}.res div{padding:6px 0;border-top:1px solid var(--line-2)}.res .ok{color:#2f6b1f}.res .ng{color:var(--red)}
+.hidden{display:none!important}
+.demo{background:#fff6d6;color:#7a5a00;font-size:12.5px;text-align:center;padding:6px 10px}
+</style>
+</head>
+<body>
+<header class="top"><div class="org">서울특별시사회복지사협회 정책위원회 · 연구자용</div><h1>동의서 연구자 일괄 서명 · 이메일 발송</h1></header>
+<div class="demo hidden" id="demoBar">데모 모드 — GAS_URL이 비어 있어 예시 데이터로 표시됩니다.</div>
+<main class="wrap">
+  <div class="err" id="err"></div>
+
+  <section class="card" id="loginCard">
+    <h3>접속 확인</h3>
+    <div class="field"><label>연구자용 비밀번호</label><input id="key" type="password" inputmode="numeric" placeholder="담당자에게 받은 번호"></div>
+    <button class="btn navy" id="btnLoad">참여자 불러오기</button>
+  </section>
+
+  <section id="main" class="hidden">
+    <div class="tabs" id="tabs"></div>
+
+    <div class="card">
+      <h3>서명할 참여자 <span style="font-weight:400;color:var(--ink-3);font-size:13px">(서명대기 상태만 선택 가능)</span></h3>
+      <label style="display:flex;gap:12px;align-items:center;padding:8px 0 10px;font-weight:700"><input type="checkbox" id="selAll" checked>전체 선택</label>
+      <div id="list"></div>
+    </div>
+
+    <div class="card">
+      <h3>연구자 서명</h3>
+      <div class="field"><label>연구자 성명</label>
+        <select id="rName"><option value="">선택</option><option>김아래미</option><option>조소연</option><option>황흥기</option><option value="__etc">직접 입력</option></select>
+        <input id="rNameEtc" class="hidden" style="margin-top:8px" placeholder="연구자 성명">
+      </div>
+      <div class="sig" id="sigR">
+        <div class="pad"><canvas></canvas><div class="ph">여기에 서명하세요 — 선택한 참여자 전원의 동의서에 동일하게 들어갑니다</div></div>
+        <div class="tools"><button type="button" data-clear>다시 쓰기</button></div>
+      </div>
+      <div class="hint">서명일은 오늘 날짜로 기재됩니다.</div>
+    </div>
+
+    <button class="btn" id="btnSign">서명 적용하고 이메일 발송</button>
+    <div class="card res hidden" id="resCard"><h3>처리 결과</h3><div id="resList"></div></div>
+  </section>
+</main>
+
+<script>
+const GAS_URL = "";   // index.html 과 동일한 /exec URL
+const GROUPS = {C:["실무자","10:00"],B:["중간관리자","14:00"],A:["최고관리자","16:00"]};
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let data=[], group="C", key="";
+if(!GAS_URL) $("#demoBar").classList.remove("hidden");
+
+function makePad(root){
+  const pad=root.querySelector(".pad"),cv=root.querySelector("canvas"),ctx=cv.getContext("2d");let drawing=false,strokes=0,last=null;
+  function size(){const r=pad.getBoundingClientRect(),dpr=Math.max(1,devicePixelRatio||1);const img=strokes?cv.toDataURL():null;cv.width=Math.round(r.width*dpr);cv.height=Math.round(r.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.lineCap="round";ctx.lineJoin="round";ctx.lineWidth=2.6;ctx.strokeStyle="#111827";if(img){const im=new Image();im.onload=()=>ctx.drawImage(im,0,0,r.width,r.height);im.src=img;}}
+  const pos=e=>{const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}};
+  pad.addEventListener("pointerdown",e=>{e.preventDefault();pad.setPointerCapture(e.pointerId);drawing=true;last=pos(e);ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(last.x+.1,last.y+.1);ctx.stroke();strokes++;pad.classList.add("inked")});
+  pad.addEventListener("pointermove",e=>{if(!drawing)return;e.preventDefault();const p=pos(e),m={x:(last.x+p.x)/2,y:(last.y+p.y)/2};ctx.quadraticCurveTo(last.x,last.y,m.x,m.y);ctx.stroke();ctx.beginPath();ctx.moveTo(m.x,m.y);last=p});
+  ["pointerup","pointercancel","pointerleave"].forEach(ev=>pad.addEventListener(ev,()=>drawing=false));
+  root.querySelector("[data-clear]").addEventListener("click",()=>{strokes=0;pad.classList.remove("inked");size();ctx.clearRect(0,0,cv.width,cv.height)});
+  new ResizeObserver(()=>{if(pad.offsetWidth)size()}).observe(pad);
+  return{isEmpty:()=>strokes===0,data:()=>trim(cv)};
+}
+function trim(cv){const ctx=cv.getContext("2d"),w=cv.width,h=cv.height,d=ctx.getImageData(0,0,w,h).data;let a=w,b=h,c=0,e=0;for(let y=0;y<h;y++)for(let x=0;x<w;x++){if(d[(y*w+x)*4+3]>10){if(x<a)a=x;if(x>c)c=x;if(y<b)b=y;if(y>e)e=y}}if(c<=a)return"";const p=14,o=document.createElement("canvas");o.width=c-a+p*2;o.height=e-b+p*2;const g=o.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,o.width,o.height);g.drawImage(cv,a,b,c-a,e-b,p,p,c-a,e-b);return o.toDataURL("image/png")}
+const pad=makePad($("#sigR"));
+const showErr=m=>{const e=$("#err");e.textContent=m;e.classList.add("show");scrollTo({top:0,behavior:"smooth"})};
+const clearErr=()=>$("#err").classList.remove("show");
+
+async function load(){
+  clearErr(); key=$("#key").value.trim();
+  if(!key) return showErr("비밀번호를 입력하세요.");
+  $("#btnLoad").disabled=true;
+  try{
+    if(!GAS_URL){ data=[{id:"C-01",group:"C",name:"김민정",org:"서대문노인종합복지관",email:"a@b.c",status:"서명대기",sig:""},{id:"C-02",group:"C",name:"박민선",org:"신길종합사회복지관",email:"a@b.c",status:"서명대기",sig:""},{id:"C-03",group:"C",name:"손지연",org:"중부재단",status:"미작성"},{id:"A-01",group:"A",name:"강현덕",org:"영등포구가족센터",status:"완료"}]; }
+    else{
+      const r=await fetch(`${GAS_URL}?action=pending&key=${encodeURIComponent(key)}`); const j=await r.json();
+      if(!j.ok) throw new Error(j.error||"불러오기 실패"); data=j.participants;
+    }
+    $("#loginCard").classList.add("hidden"); $("#main").classList.remove("hidden"); render();
+  }catch(e){ showErr(e.message); }
+  finally{ $("#btnLoad").disabled=false; }
+}
+function render(){
+  $("#tabs").innerHTML=Object.entries(GROUPS).map(([k,[n,t]])=>{const c=data.filter(d=>d.group===k&&d.status==="서명대기").length;return`<button class="${group===k?'on':''}" data-g="${k}">${k} ${n}<small>${t} · 대기 ${c}</small></button>`}).join("");
+  $$("#tabs button").forEach(b=>b.onclick=()=>{group=b.dataset.g;render()});
+  const rows=data.filter(d=>d.group===group).sort((a,b)=>a.id.localeCompare(b.id));
+  $("#list").innerHTML=rows.length?rows.map(d=>{const w=d.status==="서명대기";return`<label class="row"><input type="checkbox" class="pick" value="${d.id}" ${w?'checked':'disabled'}><span><div class="nm">${d.name}</div><div class="org">${d.org||""} ${d.email?'· '+d.email:''}</div></span><span class="st ${d.status==='완료'?'done':w?'':'none'}">${d.status}</span>${d.sig?`<img src="${d.sig}" alt="">`:''}</label>`}).join(""):'<div class="hint">이 그룹에 참여자가 없습니다.</div>';
+  $("#selAll").onchange=e=>$$(".pick:not(:disabled)").forEach(c=>c.checked=e.target.checked);
+}
+$("#rName").onchange=e=>$("#rNameEtc").classList.toggle("hidden",e.target.value!=="__etc");
+const rname=()=>$("#rName").value==="__etc"?$("#rNameEtc").value.trim():$("#rName").value;
+
+async function sign(){
+  clearErr();
+  const ids=$$(".pick:checked").map(c=>c.value);
+  if(!ids.length) return showErr("서명할 참여자를 선택하세요.");
+  if(!rname()) return showErr("연구자 성명을 선택하세요.");
+  if(pad.isEmpty()) return showErr("연구자 서명을 해주세요.");
+  if(!confirm(`${GROUPS[group][0]} 그룹 ${ids.length}명의 동의서에 ${rname()} 연구자 서명을 넣고 이메일을 발송합니다. 진행할까요?`)) return;
+  const btn=$("#btnSign"); btn.disabled=true; btn.innerHTML=`<span class="spin"></span>PDF 생성·발송 중… (${ids.length}명, 1분 정도 걸릴 수 있습니다)`;
+  try{
+    let res;
+    if(!GAS_URL){ await new Promise(r=>setTimeout(r,1500)); res={ok:true,results:ids.map(id=>({id,name:data.find(d=>d.id===id).name,ok:true,msg:"데모"}))}; }
+    else{
+      const r=await fetch(GAS_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"sign",key,ids,researcherName:rname(),researcherSig:pad.data()})});
+      res=await r.json();
+    }
+    if(!res.ok) throw new Error(res.error||"서버 오류");
+    $("#resCard").classList.remove("hidden");
+    $("#resList").innerHTML=res.results.map(x=>`<div class="${x.ok?'ok':'ng'}">${x.ok?'✓':'✕'} ${x.name} (${x.id}) — ${x.msg}</div>`).join("");
+    res.results.forEach(x=>{const d=data.find(d=>d.id===x.id); if(d&&x.ok) d.status="완료";});
+    render();
+  }catch(e){ showErr("처리 실패: "+e.message); }
+  finally{ btn.disabled=false; btn.textContent="서명 적용하고 이메일 발송"; }
+}
+$("#btnLoad").onclick=load; $("#btnSign").onclick=sign;
+$("#key").addEventListener("keydown",e=>{if(e.key==="Enter")load()});
+</script>
+</body>
+</html>

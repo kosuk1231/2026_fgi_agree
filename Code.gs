@@ -2,7 +2,10 @@
  * FGI 연구참여 동의서 · 참여수당 영수증  — Google Apps Script 백엔드
  * 배포 계정: kosuk1231@sasw.or.kr
  *
- * 1) 이 파일 + Templates.gs 를 Apps Script 프로젝트에 넣는다.
+ * 흐름: 참여자 제출(submit) → 서명대기 → 연구자 일괄 서명(sign) → 동의서 PDF 생성 + 이메일 발송 → 완료
+ *
+ * 1) 이 파일 + Templates.gs 를 **같은** Apps Script 프로젝트에 넣는다.
+ *    (Templates.gs 가 없으면 "buildConsentHtml is not defined" 오류)
  * 2) setup() 을 한 번 실행 → 시트 4개 생성 + 명단 15명 입력 + Drive 폴더 생성
  * 3) 배포 > 새 배포 > 웹 앱 : 실행 계정 "나", 액세스 "모든 사용자" → /exec URL 복사
  * 4) index.html 의 GAS_URL 에 붙여넣기
@@ -16,14 +19,15 @@ const CONFIG = {
   REPLY_TO: "sasw@sasw.or.kr",
   PROJECT: "사회복지사를 위한 AI 실천윤리 가이드라인 개발 연구 FGI",
   STUDY_TITLE: "사회복지현장 인공지능(AI) 윤리 가이드 개발 연구",
-  AMOUNT: 100000
+  AMOUNT: 100000,
+  ADMIN_KEY: "2962"                              // 연구자용 서명 페이지(sign.html) 비밀번호 — 바꿔서 쓰세요
 };
 
 const SHEETS = {
   participants: ["id","group","groupName","no","name","org","position","email","status","submittedAt"],
   consent:  ["id","group","name","email","org","position","안내문열람","동의1","동의2","동의3","동의4",
-             "생년월","성별","소속기관/직급","근무지역","주요업무","현기관근무기간","사회복지경력","학력","자격증",
-             "연구자","동의일","PDF_URL","submittedAt"],
+             "생년월일","성별","소속기관/직급","근무지역","주요업무","현기관근무기간","사회복지경력","학력","자격증",
+             "동의일","참여자서명파일ID","상태","연구자","연구자서명일","PDF_URL","발송일시","submittedAt"],
   receipt:  ["id","group","name","FGI일시","주소","전화번호","은행명","계좌번호","금액","원천징수액","실수령액",
              "개인정보동의","고유식별정보동의","영수일","PDF_URL","submittedAt"],
   log:      ["timestamp","id","name","email","result","detail"]
@@ -79,12 +83,24 @@ function getFolder(sub) {
 
 /* ---------------- 웹앱 엔드포인트 ---------------- */
 function doGet(e) {
-  // 간단한 상태 확인용: /exec?action=status  → 그룹별 완료 현황
-  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
-  const rows = ss.getSheetByName("participants").getDataRange().getValues().slice(1);
-  const out = rows.map(r => ({ id:r[0], group:r[1], name:r[4], status:r[8], submittedAt:r[9] }));
-  return json({ ok:true, participants: out });
+  const p = (e && e.parameter) || {};
+  if (p.action === "pending") {
+    if (p.key !== CONFIG.ADMIN_KEY) return json({ ok:false, error:"비밀번호가 올바르지 않습니다." });
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const prow = ss.getSheetByName("participants").getDataRange().getValues().slice(1);
+    const crow = ss.getSheetByName("consent").getDataRange().getValues().slice(1);
+    const sigOf = {}; crow.forEach(r => { if (r[0] && r[21]) sigOf[r[0]] = r[21]; });
+    const out = prow.filter(r => r[0]).map(r => ({
+      id:r[0], group:r[1], name:r[4], org:r[5], email:r[7], status:r[8]||"미작성",
+      sig: sigOf[r[0]] ? safeThumb(sigOf[r[0]]) : ""
+    }));
+    return json({ ok:true, participants: out });
+  }
+  // 기본: 그룹별 현황(공개 정보만)
+  const rows = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName("participants").getDataRange().getValues().slice(1);
+  return json({ ok:true, participants: rows.filter(r=>r[0]).map(r => ({ id:r[0], group:r[1], name:r[4], status:r[8] })) });
 }
+function safeThumb(fileId){ try { return "data:image/png;base64," + Utilities.base64Encode(DriveApp.getFileById(fileId).getBlob().getBytes()); } catch(_) { return ""; } }
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
@@ -92,84 +108,133 @@ function doPost(e) {
   let d = null;
   try {
     d = JSON.parse(e.postData.contents);
-    validate(d);
-
-    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
-    const ps = ss.getSheetByName("participants");
-
-    // 중복 제출 방지
-    const prow = findRow(ps, d.id);
-    if (prow && ps.getRange(prow, 9).getValue() === "완료") {
-      throw new Error("이미 제출된 참여자입니다. 수정이 필요하면 담당자(02-786-2962)에게 연락해 주세요.");
-    }
-
-    // PDF 생성
-    const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyyMMdd_HHmm");
-    const folder = getFolder(`${d.group}_${d.groupName}`);
-    const consentPdf = htmlToPdf(buildConsentHtml(d), `동의서_${d.group}_${d.name}_${stamp}.pdf`);
-    const receiptPdf = htmlToPdf(buildReceiptHtml(d), `영수증_${d.group}_${d.name}_${stamp}.pdf`);
-    const f1 = folder.createFile(consentPdf);
-    const f2 = folder.createFile(receiptPdf);
-
-    const now = new Date();
-    const b = d.consent.basic, r = d.receipt;
-
-    // consent 시트
-    ss.getSheetByName("consent").appendRow([
-      d.id, d.group, d.name, d.email, d.org, d.position, "Y", "Y","Y","Y","Y",
-      b.birth, b.gender, b.orgPos, b.region, b.job, b.tenure, b.career, b.edu, b.cert,
-      d.consent.researcherName, d.consent.date, f1.getUrl(), now
-    ]);
-    // receipt 시트 (주민등록번호는 저장하지 않음 — PDF에만 기재)
-    ss.getSheetByName("receipt").appendRow([
-      d.id, d.group, d.name, d.fgiDate, r.address, r.phone, r.bank, "'" + r.account,
-      CONFIG.AMOUNT, 0, CONFIG.AMOUNT, r.privacyAgree, r.uidAgree, r.date, f2.getUrl(), now
-    ]);
-    // participants 상태
-    if (prow) {
-      ps.getRange(prow, 8, 1, 3).setValues([[d.email, "완료", now]]);
-    } else {
-      ps.appendRow([d.id, d.group, d.groupName, 99, d.name, d.org, d.position, d.email, "완료(직접입력)", now]);
-    }
-
-    // 메일 발송
-    sendMails(d, [consentPdf, receiptPdf]);
-
-    ss.getSheetByName("log").appendRow([now, d.id, d.name, d.email, "성공", f1.getUrl()]);
-    return json({ ok:true, id:d.id });
-
+    if (d.action === "sign") return json(handleSign(d));
+    return json(handleSubmit(d));
   } catch (err) {
-    try {
-      SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName("log")
-        .appendRow([new Date(), d && d.id, d && d.name, d && d.email, "실패", String(err && err.message || err)]);
-    } catch (_) {}
+    log(d && d.id, d && d.name, d && d.email, "실패", err);
     return json({ ok:false, error: String(err && err.message || err) });
   } finally {
     lock.releaseLock();
   }
 }
 
+/* ---------- 1) 참여자 제출: 저장 + 영수증 PDF 즉시 생성 (이메일은 아직) ---------- */
+function handleSubmit(d) {
+  validate(d);
+  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const ps = ss.getSheetByName("participants");
+  const prow = findRow(ps, d.id);
+  if (prow) {
+    const st = ps.getRange(prow, 9).getValue();
+    if (st === "서명대기" || st === "완료") throw new Error("이미 제출된 참여자입니다. 수정이 필요하면 담당자(02-786-2962)에게 연락해 주세요.");
+  }
+  const now = new Date();
+  const stamp = Utilities.formatDate(now, "Asia/Seoul", "yyyyMMdd_HHmm");
+  const folder = getFolder(`${d.group}_${d.groupName}`);
+  const sigFolder = getFolder("_서명이미지");
+
+  // 참여자 서명 PNG 보관(동의서 PDF는 연구자 서명 후 생성)
+  const sigFile = sigFolder.createFile(dataUrlToBlob(d.consent.sig, `서명_${d.id}_${d.name}.png`));
+  // 영수증 PDF는 지금 바로 (주민번호는 여기에만 기재, 시트/다른 곳에 저장 안 함)
+  const receiptPdf = htmlToPdf(buildReceiptHtml(d), `영수증_${d.group}_${d.name}_${stamp}.pdf`);
+  const f2 = folder.createFile(receiptPdf);
+
+  const b = d.consent.basic, r = d.receipt;
+  ss.getSheetByName("consent").appendRow([
+    d.id, d.group, d.name, d.email, d.org, d.position, "Y", "Y","Y","Y","Y",
+    "'" + b.birth, b.gender, b.orgPos, b.region, b.job, b.tenure, b.career, b.edu, b.cert,
+    d.consent.date, sigFile.getId(), "서명대기", "", "", "", "", now
+  ]);
+  ss.getSheetByName("receipt").appendRow([
+    d.id, d.group, d.name, d.fgiDate, r.address, r.phone, r.bank, "'" + r.account,
+    CONFIG.AMOUNT, 0, CONFIG.AMOUNT, r.privacyAgree, r.uidAgree, r.date, f2.getUrl(), now
+  ]);
+  if (prow) ps.getRange(prow, 8, 1, 3).setValues([[d.email, "서명대기", now]]);
+  else ps.appendRow([d.id, d.group, d.groupName, 99, d.name, d.org, d.position, d.email, "서명대기", now]);
+
+  log(d.id, d.name, d.email, "제출", "영수증 PDF 생성, 연구자 서명 대기");
+  return { ok:true, id:d.id };
+}
+
+/* ---------- 2) 연구자 일괄 서명: 동의서 PDF 생성 + 이메일 발송 ---------- */
+function handleSign(d) {
+  if (d.key !== CONFIG.ADMIN_KEY) throw new Error("비밀번호가 올바르지 않습니다.");
+  if (!d.ids || !d.ids.length) throw new Error("대상이 없습니다.");
+  if (!d.researcherName || !d.researcherSig) throw new Error("연구자 성명/서명 누락");
+
+  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const cs = ss.getSheetByName("consent"), rs = ss.getSheetByName("receipt"), ps = ss.getSheetByName("participants");
+  const cHead = cs.getDataRange().getValues(), rAll = rs.getDataRange().getValues();
+  const signDate = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy년 M월 d일");
+  const results = [];
+
+  d.ids.forEach(id => {
+    let name = id;
+    try {
+      const ci = cHead.findIndex((r,i) => i>0 && r[0] === id);
+      if (ci < 0) throw new Error("동의서 데이터 없음");
+      const c = cHead[ci]; name = c[2];
+      if (c[22] === "완료") throw new Error("이미 서명·발송 완료");
+      const rr = rAll.find((r,i) => i>0 && r[0] === id);
+      if (!rr) throw new Error("영수증 데이터 없음");
+
+      // 참여자 서명 복원
+      const sigData = safeThumb(c[21]);
+      const groupName = ps.getDataRange().getValues().find(r => r[0] === id);
+      const gname = groupName ? groupName[2] : ({A:"최고관리자",B:"중간관리자",C:"실무자"})[c[1]];
+      const data = {
+        id, group:c[1], groupName:gname, fgiDate: rr[3], place:"서울특별시사회복지사협회 304호 다락(多樂)실",
+        name, org:c[4], position:c[5], email:c[3],
+        consent:{ basic:{ birth:String(c[11]), gender:c[12], orgPos:c[13], region:c[14], job:c[15], tenure:c[16], career:c[17], edu:c[18], cert:c[19] },
+                  sig:sigData, date:c[20], researcherName:d.researcherName, researcherSig:d.researcherSig, researcherDate:signDate },
+        receipt:{ bank: rr[6], account: String(rr[7]).replace(/^'/,"") }
+      };
+      const folder = getFolder(`${c[1]}_${gname}`);
+      const stamp = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyyMMdd_HHmm");
+      const consentPdf = htmlToPdf(buildConsentHtml(data), `동의서_${c[1]}_${name}_${stamp}.pdf`);
+      const f1 = folder.createFile(consentPdf);
+      // 영수증 PDF는 제출 시 만든 파일을 Drive URL로 다시 불러옴
+      const receiptFile = DriveApp.getFileById(idFromUrl(rr[14]));
+      const receiptPdf = receiptFile.getBlob().setName(receiptFile.getName());
+
+      sendMails(data, [consentPdf, receiptPdf]);
+
+      const now = new Date();
+      cs.getRange(ci+1, 23, 1, 5).setValues([["완료", d.researcherName, signDate, f1.getUrl(), now]]);
+      const prow = findRow(ps, id); if (prow) ps.getRange(prow, 9).setValue("완료");
+      log(id, name, c[3], "발송", d.researcherName + " 서명 / " + f1.getUrl());
+      results.push({ id, name, ok:true, msg:"동의서 PDF 생성, 이메일 발송 완료" });
+    } catch (err) {
+      log(id, name, "", "서명실패", err);
+      results.push({ id, name, ok:false, msg:String(err && err.message || err) });
+    }
+  });
+  return { ok:true, results };
+}
+
 function validate(d) {
-  const need = ["id","group","name","email"];
-  need.forEach(k => { if (!d[k]) throw new Error("필수값 누락: " + k); });
+  ["id","group","name","email"].forEach(k => { if (!d[k]) throw new Error("필수값 누락: " + k); });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email)) throw new Error("이메일 형식 오류");
-  if (!d.consent || !d.consent.sig || !d.consent.researcherSig) throw new Error("서명 누락");
+  if (!d.consent || !d.consent.sig) throw new Error("참여자 서명 누락");
+  if (!/^\d{6}$/.test(d.consent.basic.birth)) throw new Error("생년월일 형식 오류");
   if (!d.receipt || !/^\d{6}-\d{7}$/.test(d.receipt.rrn)) throw new Error("주민등록번호 형식 오류");
 }
-
 function findRow(sh, id) {
-  const ids = sh.getRange(2, 1, Math.max(sh.getLastRow()-1, 1), 1).getValues().flat();
-  const i = ids.indexOf(id);
+  const n = sh.getLastRow(); if (n < 2) return null;
+  const i = sh.getRange(2, 1, n-1, 1).getValues().flat().indexOf(id);
   return i < 0 ? null : i + 2;
 }
-
-function htmlToPdf(html, filename) {
-  return Utilities.newBlob(html, "text/html", filename.replace(/\.pdf$/, ".html"))
-    .getAs("application/pdf").setName(filename);
+function dataUrlToBlob(dataUrl, name) {
+  const b64 = String(dataUrl).split(",")[1];
+  return Utilities.newBlob(Utilities.base64Decode(b64), "image/png", name);
 }
-
-function json(o) {
-  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+function idFromUrl(url) { const m = String(url).match(/[-\w]{25,}/); return m ? m[0] : url; }
+function htmlToPdf(html, filename) {
+  return Utilities.newBlob(html, "text/html", filename.replace(/\.pdf$/, ".html")).getAs("application/pdf").setName(filename);
+}
+function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+function log(id, name, email, result, detail) {
+  try { SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName("log").appendRow([new Date(), id||"", name||"", email||"", result, String(detail && detail.message || detail || "")]); } catch(_) {}
 }
 
 /* ---------------- 메일 ---------------- */
@@ -179,7 +244,7 @@ function sendMails(d, attachments) {
 <div style="font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:15px;line-height:1.7;color:#1c2430;max-width:600px">
   <p>${d.name}님, 안녕하세요.<br>서울특별시사회복지사협회 정책위원회입니다.</p>
   <p>「${CONFIG.STUDY_TITLE}」 초점집단면접(FGI)에 참여해 주셔서 감사합니다.<br>
-  방금 서명하신 <strong>연구참여 동의서</strong>와 <strong>참여수당 영수증</strong> 사본을 PDF로 첨부해 드립니다.</p>
+  서명하신 <strong>연구참여 동의서</strong>(연구자 ${d.consent.researcherName} 서명 완료)와 <strong>참여수당 영수증</strong> 사본을 PDF로 첨부해 드립니다.</p>
   <table style="border-collapse:collapse;font-size:14px;margin:12px 0">
     <tr><td style="padding:4px 12px 4px 0;color:#6b7280">그룹</td><td>${d.group} · ${d.groupName}</td></tr>
     <tr><td style="padding:4px 12px 4px 0;color:#6b7280">일시</td><td>${d.fgiDate}</td></tr>
@@ -189,9 +254,8 @@ function sendMails(d, attachments) {
   <p style="font-size:13.5px;color:#4a5565">서울특별시사회복지사협회 회원조직팀 고석우 과장<br>02-786-2962 · ${CONFIG.ADMIN_EMAIL}<br>서울시 영등포구 당산로 171, 금강펜테리움 206호</p>
 </div>`;
   GmailApp.sendEmail(d.email, subject, "", { htmlBody: body, name: CONFIG.SENDER_NAME, replyTo: CONFIG.REPLY_TO, attachments });
-  // 담당자 사본
-  GmailApp.sendEmail(CONFIG.ADMIN_EMAIL, `[FGI 접수] ${d.group} ${d.name} (${d.org})`, "",
-    { htmlBody: `<p>${d.group}·${d.groupName} / ${d.name} / ${d.org} ${d.position}<br>이메일: ${d.email}<br>계좌: ${d.receipt.bank} ${d.receipt.account}<br>연구자: ${d.consent.researcherName}</p>`, name: "FGI 접수 알림", attachments });
+  GmailApp.sendEmail(CONFIG.ADMIN_EMAIL, `[FGI 발송] ${d.group} ${d.name} (${d.org})`, "",
+    { htmlBody: `<p>${d.group}·${d.groupName} / ${d.name} / ${d.org} ${d.position}<br>이메일: ${d.email}<br>계좌: ${d.receipt.bank} ${d.receipt.account}<br>연구자: ${d.consent.researcherName}</p>`, name: "FGI 발송 알림", attachments });
 }
 
 /* ---------------- 테스트(선택) ---------------- */
@@ -199,8 +263,8 @@ function testPdf() {
   const d = {
     id:"A-00", group:"A", groupName:"최고관리자", fgiDate:"2026년 10월 6일(화) 16:00~18:00",
     place:"서울특별시사회복지사협회 304호 다락실", name:"홍길동", org:"테스트복지관", position:"관장", email:CONFIG.ADMIN_EMAIL,
-    consent:{ basic:{birth:"1980년 05월",gender:"남",orgPos:"테스트복지관 / 관장",region:"영등포구",job:"기관 운영",tenure:"2015년 03월 ~ 현재",career:"20년",edu:"석사졸업",cert:"사회복지사 1급"},
-      sig:"", researcherName:"김아래미", researcherSig:"", date:"2026년 10월 6일" },
+    consent:{ basic:{birth:"800501",gender:"남",orgPos:"테스트복지관 / 관장",region:"영등포구",job:"기관 운영",tenure:"2015년 03월 ~ 현재",career:"20년",edu:"석사졸업",cert:"사회복지사 1급"},
+      sig:"", researcherName:"김아래미", researcherSig:"", date:"2026년 10월 6일", researcherDate:"2026년 10월 6일" },
     receipt:{ rrn:"800501-1234567", address:"서울시 영등포구 당산로 171", phone:"010-0000-0000", bank:"국민", account:"000000-00-000000",
       privacyAgree:"동의", uidAgree:"동의", sig:"", date:"2026년 10월 6일" }
   };
